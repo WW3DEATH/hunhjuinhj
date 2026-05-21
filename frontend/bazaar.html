@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bazaar.lk — Buy & Sell Anything in Sri Lanka</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-storage-compat.js"></script>
+
+    <script>
+        tailwind.config = { theme: { extend: { fontFamily: { heading: ['Space Grotesk','system-ui','sans-serif'], body: ['Manrope','system-ui','sans-serif'] } } } }
+    </script>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Manrope',system-ui,sans-serif;background:#000;color:#fff}
+        h1,h2,h3,h4,h5,h6{font-family:'Space Grotesk',system-ui,sans-serif}
+        .scrollbar-hide::-webkit-scrollbar{display:none}
+        .scrollbar-hide{-ms-overflow-style:none;scrollbar-width:none}
+        @keyframes fadeInUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+        .animate-fade-in-up{animation:fadeInUp .5s ease forwards}
+        @keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+        .animate-slide-down{animation:slideDown .3s ease forwards}
+        .listing-card:hover{transform:translateY(-4px)}
+        .listing-card{transition:transform .3s ease,box-shadow .3s ease}
+        .category-card:hover .cat-icon{transform:scale(1.1)}
+        .cat-icon{transition:transform .3s ease}
+        @keyframes slideInRight{from{opacity:0;transform:translateX(100%)}to{opacity:1;transform:translateX(0)}}
+        @keyframes slideOutRight{from{opacity:1;transform:translateX(0)}to{opacity:0;transform:translateX(100%)}}
+        .toast{animation:slideInRight .4s ease forwards}
+        .modal-overlay{animation:fadeIn .2s ease forwards}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes pulse2{0%,100%{opacity:1}50%{opacity:.7}}
+        .badge-pulse{animation:pulse2 2s infinite}
+        input:focus,select:focus,textarea:focus{outline:none;border-color:rgba(255,255,255,.3)}
+        .admin-sidebar-link:hover,.admin-sidebar-link.active{background:rgba(255,255,255,.1);color:#fff}
+        .profile-dropdown{animation:slideDown .2s ease forwards}
+        .top-badge{background:linear-gradient(135deg,#f59e0b,#d97706);animation:badgeGlow 2s infinite alternate}
+        @keyframes badgeGlow{from{box-shadow:0 0 8px rgba(245,158,11,.3)}to{box-shadow:0 0 16px rgba(245,158,11,.5)}}
+        .img-thumb{width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.1);cursor:pointer;transition:transform .2s}
+        .img-thumb:hover{transform:scale(1.05)}
+        .img-viewer{position:fixed;inset:0;z-index:300;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;cursor:pointer}
+        .img-viewer img{max-width:90vw;max-height:90vh;object-fit:contain;border-radius:12px}
+        .nav-link{cursor:pointer}
+    </style>
+</head>
+<body>
+<div id="toastContainer" class="fixed top-24 right-6 z-[200] flex flex-col gap-3"></div>
+<div id="imageViewer" class="img-viewer hidden" onclick="this.classList.add('hidden')"><img id="imageViewerImg" src="" alt="Full Image"></div>
+<div id="app"></div>
+
+<script>
+// ===== FIREBASE CONFIG =====
+const firebaseConfig = {
+  apiKey: "AIzaSyCLSDAoo8Xeksz3VLNWAaHPipy2WSMI-oc",
+  authDomain: "dteachmedia.firebaseapp.com",
+  databaseURL: "https://dteachmedia-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "dteachmedia",
+  storageBucket: "dteachmedia.firebasestorage.app",
+  messagingSenderId: "611643436494",
+  appId: "1:611643436494:web:16bd8a28640720445f8f9f"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+const storage = firebase.storage();
+
+const ADMIN_EMAIL='mnmjaasim@gmail.com';
+const CATEGORIES=[
+    {id:'vehicles',name:'Vehicles',icon:'fa-solid fa-car',color:'blue'},
+    {id:'property',name:'Property',icon:'fa-solid fa-building',color:'green'},
+    {id:'electronics',name:'Electronics',icon:'fa-solid fa-mobile-screen',color:'purple'},
+    {id:'jobs',name:'Jobs',icon:'fa-solid fa-briefcase',color:'yellow'},
+    {id:'fashion',name:'Fashion',icon:'fa-solid fa-shirt',color:'pink'},
+    {id:'home',name:'Home & Garden',icon:'fa-solid fa-couch',color:'orange'},
+    {id:'services',name:'Services',icon:'fa-solid fa-wrench',color:'cyan'},
+    {id:'education',name:'Education',icon:'fa-solid fa-graduation-cap',color:'red'}
+];
+
+// ===== GLOBAL STATE =====
+let currentUser = null;
+let allAds = [];
+let currentRoute = '';
+
+// ===== UTILITIES =====
+function showToast(msg,type='info'){const c=document.getElementById('toastContainer'),t=document.createElement('div');const colors={success:'bg-green-500/10 border-green-500/20 text-green-400',error:'bg-red-500/10 border-red-500/20 text-red-400',info:'bg-blue-500/10 border-blue-500/20 text-blue-400',warning:'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'};const icons={success:'fa-solid fa-check-circle',error:'fa-solid fa-exclamation-circle',info:'fa-solid fa-info-circle',warning:'fa-solid fa-triangle-exclamation'};t.className=`toast flex items-center gap-3 px-5 py-3 rounded-xl border ${colors[type]} backdrop-blur-sm text-sm max-w-sm`;t.innerHTML=`<i class="${icons[type]} flex-shrink-0"></i><span>${msg}</span>`;c.appendChild(t);setTimeout(()=>{t.style.animation='slideOutRight .4s ease forwards';setTimeout(()=>t.remove(),400)},3500)}
+function viewImage(src){document.getElementById('imageViewerImg').src=src;document.getElementById('imageViewer').classList.remove('hidden')}
+function navigate(route){window.location.hash=route}
+
+// ===== AUTH OBSERVER =====
+auth.onAuthStateChanged(user => {
+    currentUser = user;
+    updateNavAuth();
+});
+
+function updateNavAuth(){
+    const app=document.getElementById('app');
+    // Re-render only nav if needed, handled inside render functions
+}
+
+// ===== ROUTER =====
+function router(){
+    const hash = window.location.hash.slice(1) || '/';
+    currentRoute = hash;
+    const app = document.getElementById('app');
+    
+    if(hash.startsWith('/category/')) {
+        const catId = hash.split('/')[2];
+        renderCategoryPage(catId);
+    } else if(hash.startsWith('/ad/')) {
+        const adId = hash.split('/')[2];
+        renderAdDetailPage(adId);
+    } else if(hash === '/admin') {
+        renderAdminPanel();
+    } else if(hash === '/profile') {
+        renderProfilePage();
+    } else {
+        renderHomePage();
+    }
+    window.scrollTo(0,0);
+}
+window.addEventListener('hashchange', router);
+
+// ===== DATA FETCHING =====
+function fetchAds(){
+    return db.ref('ads').once('value').then(snap => {
+        const data = snap.val() || {};
+        allAds = Object.keys(data).map(key => ({id: key, ...data[key]}));
+        return allAds;
+    });
+}
+
+// ===== PAGES =====
+
+// --- HOME PAGE ---
+function renderHomePage(){
+    fetchAds().then(ads => {
+        const approvedAds = ads.filter(a => a.status==='approved');
+        const app = document.getElementById('app');
+        app.innerHTML = `
+        <nav class="fixed top-0 left-0 right-0 z-50" style="background:rgba(0,0,0,.8);backdrop-filter:blur(12px)">
+            <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+                <a onclick="navigate('/')" class="flex items-center gap-2 cursor-pointer"><div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center"><span class="text-black font-bold text-lg font-heading">B</span></div><span class="text-white font-heading font-bold text-xl">Bazaar<span class="text-white/40">.lk</span></span></a>
+                <div class="flex items-center gap-4">
+                    ${currentUser ? `<button onclick="navigate('/profile')" class="text-white/70 hover:text-white text-sm"><i class="fa-solid fa-user mr-1"></i>Profile</button><button onclick="auth.signOut();navigate('/')" class="text-white/40 hover:text-white text-sm">Logout</button>` : `<button onclick="renderLoginModal()" class="text-white/70 hover:text-white text-sm"><i class="fa-solid fa-right-to-bracket mr-1"></i>Login</button>`}
+                    ${currentUser && currentUser.email===ADMIN_EMAIL ? `<button onclick="navigate('/admin')" class="text-yellow-400 hover:text-yellow-300 text-sm font-bold"><i class="fa-solid fa-shield mr-1"></i>Admin</button>` : ''}
+                </div>
+            </div>
+        </nav>
+
+        <section class="pt-20 relative h-screen flex items-center overflow-hidden">
+            <div class="absolute inset-0"><img src="https://picsum.photos/seed/srilanka/1920/1080.jpg" class="w-full h-full object-cover"><div class="absolute inset-0" style="background:linear-gradient(to bottom,rgba(0,0,0,.7),rgba(0,0,0,.5),#000)"></div></div>
+            <div class="relative z-10 max-w-5xl mx-auto px-6 text-center">
+                <h1 class="font-heading font-bold text-5xl md:text-7xl leading-none mb-6 animate-fade-in-up">Buy & Sell<br><span class="text-white/60">Anything</span></h1>
+                <p class="text-lg text-white/60 font-light mb-10 animate-fade-in-up" style="animation-delay:.2s">Sri Lanka's most trusted marketplace.</p>
+            </div>
+        </section>
+
+        <section class="py-24 px-6"><div class="max-w-7xl mx-auto"><h2 class="font-heading font-bold text-4xl mb-12">Categories</h2><div class="grid grid-cols-2 md:grid-cols-4 gap-4">${CATEGORIES.map(c=>`<div onclick="navigate('/category/${c.id}')" class="category-card cursor-pointer bg-white/5 border border-white/5 rounded-2xl p-6 hover:bg-white/10 transition-all"><div class="cat-icon w-14 h-14 rounded-xl bg-${c.color}-500/10 flex items-center justify-center mb-4"><i class="${c.icon} text-${c.color}-400 text-xl"></i></div><h3 class="font-heading font-bold text-lg">${c.name}</h3><p class="text-white/40 text-sm mt-1">${approvedAds.filter(a=>a.category===c.id).length} ads</p></div>`).join('')}</div></div></section>
+
+        <section class="py-24 px-6" style="background:#09090b"><div class="max-w-7xl mx-auto"><h2 class="font-heading font-bold text-4xl mb-8">Latest Ads</h2><div class="grid grid-cols-1 md:grid-cols-3 gap-6">${approvedAds.slice(0,6).map(a=>renderAdCard(a)).join('')}</div></div></section>
+        `;
+    });
+}
+
+// --- CATEGORY PAGE ---
+function renderCategoryPage(catId){
+    fetchAds().then(ads => {
+        const cat = CATEGORIES.find(c=>c.id===catId);
+        if(!cat) { navigate('/'); return; }
+        const catAds = ads.filter(a => a.status==='approved' && a.category===catId);
+        const app = document.getElementById('app');
+        app.innerHTML = `
+        <nav class="fixed top-0 left-0 right-0 z-50" style="background:rgba(0,0,0,.8);backdrop-filter:blur(12px)">
+            <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+                <a onclick="navigate('/')" class="flex items-center gap-2 cursor-pointer"><div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center"><span class="text-black font-bold text-lg font-heading">B</span></div><span class="text-white font-heading font-bold text-xl">Bazaar<span class="text-white/40">.lk</span></span></a>
+                <div class="flex items-center gap-4">
+                    ${currentUser ? `<button onclick="navigate('/profile')" class="text-white/70 hover:text-white text-sm">Profile</button>` : `<button onclick="renderLoginModal()" class="text-white/70 hover:text-white text-sm">Login</button>`}
+                </div>
+            </div>
+        </nav>
+        <div class="pt-28 pb-24 px-6 max-w-7xl mx-auto">
+            <button onclick="navigate('/')" class="text-white/40 hover:text-white text-sm mb-8 inline-flex items-center gap-2"><i class="fa-solid fa-arrow-left"></i>Back to Home</button>
+            <div class="flex items-center gap-4 mb-10">
+                <div class="w-14 h-14 rounded-xl bg-${cat.color}-500/10 flex items-center justify-center"><i class="${cat.icon} text-${cat.color}-400 text-2xl"></i></div>
+                <div><h1 class="font-heading font-bold text-4xl">${cat.name}</h1><p class="text-white/40 text-sm">${catAds.length} ads listed</p></div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                ${catAds.length > 0 ? catAds.map(a=>renderAdCard(a)).join('') : '<div class="col-span-3 text-center py-20 text-white/30">No ads in this category yet.</div>'}
+            </div>
+        </div>`;
+    });
+}
+
+// --- AD DETAIL PAGE ---
+function renderAdDetailPage(adId){
+    fetchAds().then(ads => {
+        const a = ads.find(x=>x.id===adId);
+        if(!a) { navigate('/'); return; }
+        const app = document.getElementById('app');
+        app.innerHTML = `
+        <nav class="fixed top-0 left-0 right-0 z-50" style="background:rgba(0,0,0,.8);backdrop-filter:blur(12px)">
+            <div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
+                <a onclick="navigate('/')" class="flex items-center gap-2 cursor-pointer"><div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center"><span class="text-black font-bold text-lg font-heading">B</span></div><span class="text-white font-heading font-bold text-xl">Bazaar<span class="text-white/40">.lk</span></span></a>
+            </div>
+        </nav>
+        <div class="pt-28 pb-24 px-6 max-w-3xl mx-auto">
+            <button onclick="history.back()" class="text-white/40 hover:text-white text-sm mb-8 inline-flex items-center gap-2"><i class="fa-solid fa-arrow-left"></i>Back</button>
+            <div class="bg-white/5 border border-white/5 rounded-2xl overflow-hidden">
+                <div class="h-64 md:h-96 bg-zinc-900"><img src="${a.photos&&a.photos[0]?a.photos[0]:'https://picsum.photos/seed/'+a.id+'/800/500.jpg'}" class="w-full h-full object-cover"></div>
+                <div class="p-8">
+                    <h1 class="font-heading font-bold text-3xl mb-2">${a.title}</h1>
+                    <div class="font-heading font-bold text-3xl text-white mb-4">${a.price===0?'Negotiable':'Rs '+Number(a.price).toLocaleString()}</div>
+                    <div class="flex gap-4 mb-6 text-white/50 text-sm"><span><i class="fa-solid fa-location-dot mr-1"></i>${a.location}</span><span class="capitalize"><i class="fa-solid fa-tag mr-1"></i>${a.category}</span></div>
+                    ${a.description?`<div class="bg-white/5 rounded-xl p-5 mb-6"><p class="text-white/60 text-sm leading-relaxed">${a.description}</p></div>`:''}
+                    <div class="bg-white/5 rounded-xl p-5 border border-white/5">
+                        <h3 class="font-heading font-bold text-sm mb-3 text-white/60">Seller</h3>
+                        <p class="text-white font-medium">${a.sellerName||'Unknown'}</p>
+                        <a href="tel:${a.sellerPhone}" class="mt-3 w-full bg-white/10 border border-white/10 text-white h-11 rounded-xl text-sm font-medium hover:bg-white/20 flex items-center justify-center gap-2"><i class="fa-solid fa-phone"></i>${a.sellerPhone||'N/A'}</a>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    });
+}
+
+// --- COMPONENTS ---
+function renderAdCard(a){
+    return `<div class="listing-card cursor-pointer bg-white/5 border border-white/5 rounded-2xl overflow-hidden hover:border-white/10" onclick="navigate('/ad/${a.id}')">
+        <div class="relative h-48 bg-zinc-900"><img src="${a.photos&&a.photos[0]?a.photos[0]:'https://picsum.photos/seed/'+a.id+'/600/400.jpg'}" class="w-full h-full object-cover"><div class="absolute inset-0" style="background:linear-gradient(to top,rgba(0,0,0,.4),transparent)"></div></div>
+        <div class="p-5"><h3 class="font-heading font-bold text-base truncate mb-2">${a.title}</h3><div class="font-heading font-bold text-lg text-white mb-3">${a.price===0?'Negotiable':'Rs '+Number(a.price).toLocaleString()}</div><div class="flex items-center gap-2 text-white/40 text-xs"><i class="fa-solid fa-location-dot"></i>${a.location}</div></div></div>`;
+}
+
+// --- AUTH MODALS ---
+function renderLoginModal(){
+    const m=document.createElement('div');m.id='authModal';m.className='fixed inset-0 z-[80] flex items-center justify-center';m.innerHTML=`<div class="modal-overlay absolute inset-0 bg-black/70 backdrop-blur-sm" onclick="this.parentElement.remove()"></div><div class="relative z-10 bg-zinc-900 border border-white/10 rounded-2xl p-8 w-full max-w-md mx-4 animate-slide-down"><button onclick="this.closest('#authModal').remove()" class="absolute top-4 right-4 text-white/40 hover:text-white"><i class="fa-solid fa-xmark"></i></button><h3 class="font-heading font-bold text-2xl mb-6">Log In</h3><div class="space-y-4"><input type="email" id="loginEmail" placeholder="Email" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><input type="password" id="loginPass" placeholder="Password" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><button onclick="doLogin()" class="w-full bg-white text-black h-11 rounded-xl text-sm font-medium">Log In</button></div><p class="text-center text-white/30 text-xs mt-4">No account? <span onclick="this.closest('#authModal').remove();renderSignupModal()" class="text-white cursor-pointer hover:underline">Sign Up</span></p></div>`;document.body.appendChild(m);
+}
+function renderSignupModal(){
+    const m=document.createElement('div');m.id='authModal';m.className='fixed inset-0 z-[80] flex items-center justify-center';m.innerHTML=`<div class="modal-overlay absolute inset-0 bg-black/70 backdrop-blur-sm" onclick="this.parentElement.remove()"></div><div class="relative z-10 bg-zinc-900 border border-white/10 rounded-2xl p-8 w-full max-w-md mx-4 animate-slide-down"><button onclick="this.closest('#authModal').remove()" class="absolute top-4 right-4 text-white/40 hover:text-white"><i class="fa-solid fa-xmark"></i></button><h3 class="font-heading font-bold text-2xl mb-6">Sign Up</h3><div class="space-y-4"><input type="text" id="regName" placeholder="Full Name" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><input type="email" id="regEmail" placeholder="Email" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><input type="password" id="regPass" placeholder="Password (min 6 chars)" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><button onclick="doSignup()" class="w-full bg-white text-black h-11 rounded-xl text-sm font-medium">Create Account</button></div></div>`;document.body.appendChild(m);
+}
+
+// --- FIREBASE AUTH ---
+async function doLogin(){
+    const email=document.getElementById('loginEmail').value;const pass=document.getElementById('loginPass').value;
+    try{await auth.signInWithEmailAndPassword(email,pass);document.getElementById('authModal')?.remove();showToast('Logged in!','success');if(email===ADMIN_EMAIL)navigate('/admin');else navigate('/');}catch(e){showToast(e.message,'error')}
+}
+async function doSignup(){
+    const name=document.getElementById('regName').value;const email=document.getElementById('regEmail').value;const pass=document.getElementById('regPass').value;
+    try{const cred=await auth.createUserWithEmailAndPassword(email,pass);await db.ref('users/'+cred.user.uid).set({name,email,createdAt:Date.now()});document.getElementById('authModal')?.remove();showToast('Account created!','success');navigate('/');}catch(e){showToast(e.message,'error')}
+}
+
+// --- PROFILE & POSTING (Added for completeness, simplified for space) ---
+function renderProfilePage(){
+    if(!currentUser){navigate('/');return;}
+    // Fetch user ads and render profile (Simplified for brevity, full logic previously provided)
+    document.getElementById('app').innerHTML = `<nav class="fixed top-0 left-0 right-0 z-50" style="background:rgba(0,0,0,.8)"><div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between"><a onclick="navigate('/')" class="flex items-center gap-2 cursor-pointer"><div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center"><span class="text-black font-bold text-lg font-heading">B</span></div><span class="text-white font-heading font-bold text-xl">Bazaar<span class="text-white/40">.lk</span></span></a></div></nav>
+    <div class="pt-28 px-6 max-w-4xl mx-auto"><h1 class="font-heading font-bold text-4xl mb-8">My Profile</h1><p class="text-white/50 mb-4">Logged in as: ${currentUser.email}</p><button onclick="renderPostAdModal()" class="bg-white text-black px-6 h-11 rounded-xl text-sm font-medium">Post New Ad</button><div id="userAds" class="mt-8"></div></div>`;
+    fetchAds().then(ads=>{
+        const myAds=ads.filter(a=>a.userId===currentUser.uid);
+        document.getElementById('userAds').innerHTML=myAds.length?myAds.map(a=>`<div class="bg-white/5 p-4 rounded-xl mb-3 flex justify-between items-center"><span>${a.title} - ${a.status}</span></div>`).join(''):'<p class="text-white/30">No ads posted yet.</p>';
+    });
+}
+
+async function renderPostAdModal(){
+    const m=document.createElement('div');m.id='postModal';m.className='fixed inset-0 z-[80] flex items-center justify-center overflow-y-auto';
+    m.innerHTML=`<div class="modal-overlay absolute inset-0 bg-black/70 backdrop-blur-sm" onclick="this.parentElement.remove()"></div><div class="relative z-10 bg-zinc-900 border border-white/10 rounded-2xl p-8 w-full max-w-lg mx-4 animate-slide-down my-auto"><button onclick="this.closest('#postModal').remove()" class="absolute top-4 right-4 text-white/40 hover:text-white"><i class="fa-solid fa-xmark"></i></button><h3 class="font-heading font-bold text-2xl mb-6">Post Ad</h3><div class="space-y-4"><select id="pCat" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white/70 text-sm appearance-none">${CATEGORIES.map(c=>`<option value="${c.id}">${c.name}</option>`).join('')}</select><input type="text" id="pTitle" placeholder="Title" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><input type="number" id="pPrice" placeholder="Price" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 h-11 text-white text-sm placeholder-white/30"><input type="file" id="pImage" accept="image/*" class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white text-sm"><button onclick="doPostAd()" class="w-full bg-white text-black h-11 rounded-xl text-sm font-medium">Submit for Review</button></div></div>`;
+    document.body.appendChild(m);
+}
+
+async function doPostAd(){
+    const cat=document.getElementById('pCat').value;const title=document.getElementById('pTitle').value;const price=document.getElementById('pPrice').value;const file=document.getElementById('pImage').files[0];
+    if(!title||!price){showToast('Fill all fields','error');return;}
+    showToast('Uploading...','info');
+    let photoUrl='';
+    if(file){
+        try{
+            const snap=await storage.ref('ad_images/'+Date.now()+'_'+file.name).put(file);
+            photoUrl=await snap.ref.getDownloadURL();
+        }catch(e){showToast('Image upload failed: '+e.message,'error');return;}
+    }
+    const adData={title,price:Number(price),category:cat,location:'Colombo',description:'',sellerName:currentUser.displayName||currentUser.email.split('@')[0],sellerPhone:'',userId:currentUser.uid,status:'pending',photos:photoUrl?[photoUrl]:[],createdAt:Date.now()};
+    try{await db.ref('ads').push(adData);document.getElementById('postModal')?.remove();showToast('Ad submitted for review!','success');navigate('/profile');}catch(e){showToast(e.message,'error')}
+}
+
+// --- ADMIN PANEL (Simplified for structure) ---
+function renderAdminPanel(){
+    if(!currentUser||currentUser.email!==ADMIN_EMAIL){navigate('/');return;}
+    fetchAds().then(ads=>{
+        const pending=ads.filter(a=>a.status==='pending');
+        document.getElementById('app').innerHTML=`<nav class="fixed top-0 left-0 right-0 z-50" style="background:rgba(0,0,0,.8)"><div class="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between"><a onclick="navigate('/')" class="flex items-center gap-2 cursor-pointer"><div class="w-10 h-10 bg-white rounded-lg flex items-center justify-center"><span class="text-black font-bold text-lg font-heading">B</span></div><span class="text-white font-heading font-bold text-xl">Admin</span></a></div></nav>
+        <div class="pt-28 px-6 max-w-5xl mx-auto"><h1 class="font-heading font-bold text-4xl mb-8">Pending Ads (${pending.length})</h1><div id="adminList">${pending.map(a=>`<div class="bg-white/5 p-4 rounded-xl mb-3 flex justify-between items-center"><div><span class="font-bold">${a.title}</span> <span class="text-white/40 text-xs">(Rs ${a.price})</span><br><img src="${a.photos&&a.photos[0]?a.photos[0]:''}" class="h-20 mt-2 rounded"></div><div class="flex gap-2"><button onclick="adminAction('${a.id}','approved')" class="bg-green-500/10 text-green-400 px-3 py-1 rounded text-xs">Approve</button><button onclick="adminAction('${a.id}','rejected')" class="bg-red-500/10 text-red-400 px-3 py-1 rounded text-xs">Reject</button></div></div>`).join('')}</div></div>`;
+    });
+}
+async function adminAction(id,status){
+    try{await db.ref('ads/'+id+'/status').set(status);showToast('Ad '+status,'success');renderAdminPanel();}catch(e){showToast(e.message,'error')}
+}
+
+// ===== INIT =====
+window.addEventListener('load', router);
+</script>
+</body>
+</html>
